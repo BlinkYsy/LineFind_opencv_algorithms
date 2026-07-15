@@ -137,8 +137,8 @@ bool MatchPolarity(double gradient, LineEdgePolarity polarity) {
 /// 卡尺检测区域的几何信息。
 /// </summary>
 /// <param name="center">卡尺区域中心。</param>
-/// <param name="direction">卡尺长度轴方向的单位向量。(等价于 scanDirection)</param>
-/// <param name="perpendicular">卡尺宽度轴方向的单位向量。(等价于 arrangeDirection)</param>
+/// <param name="direction">卡尺长度轴方向的单位向量。(与scanDirection方向一致)</param>
+/// <param name="perpendicular">卡尺宽度轴方向的单位向量。(与arrangeDirection方向一致)</param>
 /// <param name="length">卡尺长度。</param>
 /// <param name="width">卡尺宽度。</param>
 struct CaliperInfo {
@@ -160,6 +160,12 @@ struct CaliperProfile {
     std::vector<float> sampleOffsets;
 };
 
+/// <summary>
+/// 根据旋转ROI和检测参数，沿卡尺排列方向生成等间距卡尺。
+/// </summary>
+/// <param name="frame">旋转ROI测量框。</param>
+/// <param name="params">直线检测参数。</param>
+/// <returns>用于边缘扫描的卡尺几何信息集合。</returns>
 std::vector<CaliperInfo> GenerateCalipers(
     const LineDetectionFrame& frame,
     const LineDetectionParams& params) 
@@ -170,13 +176,13 @@ std::vector<CaliperInfo> GenerateCalipers(
     const float scanLength = frame.GetScanLength(params.scanDirection);
     const float halfArrange = arrangeLength * 0.5f;
     const cv::Point2f segmentStart = frame.center - arrangeDir * halfArrange;
-    const float spacing = arrangeLength / static_cast<float>(params.caliperCount + 1);
+    const float spacing = arrangeLength / static_cast<float>(params.caliperCount);
     const float caliperWidth = std::max(1.0f, arrangeLength / static_cast<float>(params.caliperCount));
 
     std::vector<CaliperInfo> calipers;
     calipers.reserve(params.caliperCount);
-    for (int index = 1; index <= params.caliperCount; ++index) {
-        const float offset = static_cast<float>(index) * spacing;
+    for (int index = 0; index < params.caliperCount; ++index) {
+        const float offset = (static_cast<float>(index) + 0.5f) * spacing;
         CaliperInfo caliper;
         caliper.center = segmentStart + arrangeDir * offset;
         caliper.direction = scanDir;
@@ -189,6 +195,11 @@ std::vector<CaliperInfo> GenerateCalipers(
     return calipers;
 }
 
+/// <summary>
+/// 将外部定义的箭头卡尺转换为内部统一的卡尺几何信息。
+/// </summary>
+/// <param name="calipers">箭头卡尺集合。</param>
+/// <returns>内部使用的卡尺几何信息集合。</returns>
 std::vector<CaliperInfo> ConvertCalipers(const std::vector<LineCaliper>& calipers) {
     std::vector<CaliperInfo> converted;
     converted.reserve(calipers.size());
@@ -204,6 +215,13 @@ std::vector<CaliperInfo> ConvertCalipers(const std::vector<LineCaliper>& caliper
     return converted;
 }
 
+/// <summary>
+/// 构建将图像中的旋转卡尺区域映射到局部矩形坐标系的仿射变换矩阵。
+/// </summary>
+/// <param name="caliper">卡尺几何信息。</param>
+/// <param name="length">卡尺扫描方向的采样长度。</param>
+/// <param name="width">卡尺排列方向的投影宽度。</param>
+/// <returns>从图像坐标映射到卡尺局部坐标的仿射矩阵。</returns>
 cv::Mat BuildTransformMatrix(const CaliperInfo& caliper, int length, int width) {
     const float halfLength = caliper.length * 0.5f;
     const float halfWidth = caliper.width * 0.5f;
@@ -289,9 +307,11 @@ double BilinearSample(const cv::Mat& grayImage, float x, float y) {
         }
         return static_cast<float>(grayImage.at<uchar>(pixelY, pixelX));
     };
-
+    //上边一行的两个像素之间横向插值
     const float top = readPixel(x0, y0) * (1.0f - fx) + readPixel(x1, y0) * fx;
+    //下边一行的两个像素之间横向插值
     const float bottom = readPixel(x0, y1) * (1.0f - fx) + readPixel(x1, y1) * fx;
+    //两个水平结果再进行纵向插值 -> 最终灰度值
     return static_cast<double>(top * (1.0f - fy) + bottom * fy);
 }
 
@@ -310,10 +330,12 @@ CaliperProfile ExtractCaliperProfile_new(
     CaliperProfile profile;
     profile.values.reserve(sampleCount);
     profile.sampleOffsets.reserve(sampleCount);
-
+    //卡尺矩形的左上角起始点
     const cv::Point2f start =caliper.center - caliper.direction * (caliper.length * 0.5f) - caliper.perpendicular * (caliper.width * 0.5f);
+    //长度方向相邻两个采样点之间的实际坐标增量
     const cv::Point2f scanIncrement = length > 1
         ? caliper.direction * (caliper.length / static_cast<float>(length - 1)): cv::Point2f(0.0f, 0.0f);
+    //宽度方向相邻两个采样点之间的实际坐标增量
     const cv::Point2f widthIncrement = width > 1
         ? caliper.perpendicular * (caliper.width / static_cast<float>(width - 1)): cv::Point2f(0.0f, 0.0f);
 
@@ -333,6 +355,12 @@ CaliperProfile ExtractCaliperProfile_new(
     return profile;
 }
 
+/// <summary>
+/// 对一维灰度剖面 profile 执行均值滤波平滑。
+/// </summary>
+/// <param name="profile">原始灰度剖面 profile。</param>
+/// <param name="filterSize">滤波窗口大小。</param>
+/// <returns>平滑后的灰度剖面 profile。</returns>
 std::vector<double> SmoothProfile(const std::vector<double>& profile, int filterSize) {
     if (profile.empty() || filterSize <= 1) {
         return profile;
@@ -354,7 +382,13 @@ std::vector<double> SmoothProfile(const std::vector<double>& profile, int filter
     return smoothed;
 }
 
-//寻找边缘候选点
+/// <summary>
+/// 在单个卡尺内提取灰度剖面 profile、计算梯度，并筛选满足阈值与极性的候选边缘点。
+/// </summary>
+/// <param name="grayImage">8位单通道灰度图像。</param>
+/// <param name="caliper">待检测的卡尺。</param>
+/// <param name="params">边缘阈值、极性、滤波和采样参数。</param>
+/// <returns>当前卡尺内全部有效的候选边缘点。</returns>
 std::vector<CandidateEdgePoint> FindEdgesInCaliper(
     const cv::Mat& grayImage,
     const CaliperInfo& caliper,
@@ -419,6 +453,12 @@ std::vector<CandidateEdgePoint> FindEdgesInCaliper(
     return edges;
 }
 
+/// <summary>
+/// 根据指定的选择模式，从单个卡尺的候选边缘点中选出一个检测点。
+/// </summary>
+/// <param name="edges">当前卡尺中的候选边缘点。</param>
+/// <param name="selectionMode">首个、末个或最强边缘的选择方式。</param>
+/// <returns>选中的候选点；无候选点时返回无效点。</returns>
 CandidateEdgePoint SelectPoint(
     const std::vector<CandidateEdgePoint>& edges,
     LineSelectionMode selectionMode) 
@@ -445,7 +485,13 @@ CandidateEdgePoint SelectPoint(
     }
 }
 
-//最小二乘直线拟合 -> 尽量让所有点到直线的 总体误差平方和 最小
+/// <summary>
+/// 使用最小二乘法拟合边缘点的直线 -> 尽量让所有点到直线的 总体误差平方和 最小。
+/// </summary>
+/// <param name="edgePoints">参与拟合的边缘点集合。</param>
+/// <param name="start">输出拟合线段起点。</param>
+/// <param name="end">输出拟合线段终点。</param>
+/// <returns>至少存在两个有效点且拟合成功时返回true。</returns>
 bool FitLeastSquares(
     const std::vector<LineEdgePoint>& edgePoints,
     cv::Point2f& start,
@@ -505,8 +551,14 @@ bool FitLeastSquares(
     return true;
 }
 
-//鲁棒性强度：DIST_L2 < DIST_HUBER < DIST_WELSCH  (尽量减小异常点、离群点对拟合结果的破坏)
-//调用 OpenCV 库函数中的 距离类型进行鲁棒拟合 
+/// <summary>
+/// 使用OpenCV鲁棒距离函数拟合边缘点直线。(鲁棒性强度：DIST_L2 < DIST_HUBER < DIST_WELSCH)
+/// </summary>
+/// <param name="edgePoints">参与拟合的边缘点集合。</param>
+/// <param name="start">输出拟合线段起点。</param>
+/// <param name="end">输出拟合线段终点。</param>
+/// <param name="fitMode">鲁棒拟合模式。</param>
+/// <returns>拟合成功时返回true。</returns>
 bool FitRobust(
     const std::vector<LineEdgePoint>& edgePoints,
     cv::Point2f& start,
@@ -556,7 +608,13 @@ bool FitRobust(
     return true;
 }
 
-//先用普通最小二乘拟合出一条初始直线，再用 Tukey 权重做迭代加权拟合，让离群点影响越来越小，最后得到一条更稳的直线
+/// <summary>
+/// 先用普通最小二乘拟合出一条初始直线，再用 Tukey 权重做迭代加权拟合，让离群点影响越来越小，最后得到一条更稳的直线
+/// </summary>
+/// <param name="edgePoints">参与拟合的边缘点集合。</param>
+/// <param name="start">输出拟合线段起点。</param>
+/// <param name="end">输出拟合线段终点。</param>
+/// <returns>拟合成功时返回true。</returns>
 bool FitWeightTukey(
     const std::vector<LineEdgePoint>& edgePoints,
     cv::Point2f& start,
@@ -721,6 +779,13 @@ LineDetectionResult BuildSuccess(
     return result;
 }
 
+/// <summary>
+/// 根据初始最小二乘拟合结果，剔除距离拟合直线最远的指定数量边缘点。
+/// </summary>
+/// <param name="edgePoints">原始边缘点集合。</param>
+/// <param name="excludeCount">需要剔除的点数。</param>
+/// <param name="excludedPoints">用于接收被剔除点的输出集合，可为空。</param>
+/// <returns>剔除离群点后用于最终拟合的边缘点集合。</returns>
 std::vector<LineEdgePoint> ExcludeOutlierPoints(
     const std::vector<LineEdgePoint>& edgePoints,
     int excludeCount,
@@ -783,6 +848,14 @@ std::vector<LineEdgePoint> ExcludeOutlierPoints(
     return filteredPoints;
 }
 
+/// <summary>
+/// 执行卡尺边缘检测、候选点选择、离群点剔除和直线拟合的完整流程。
+/// </summary>
+/// <param name="grayImage">8位单通道灰度图像。</param>
+/// <param name="calipers">待执行边缘扫描的卡尺集合。</param>
+/// <param name="frame">检测ROI；箭头卡尺模式下可为空框。</param>
+/// <param name="params">完整直线检测参数。</param>
+/// <returns>包含检测点、剔除点、拟合线和统计信息的检测结果。</returns>
 LineDetectionResult DetectFromCalipers(
     const cv::Mat& grayImage,
     const std::vector<CaliperInfo>& calipers,
@@ -902,6 +975,11 @@ cv::Point2f LineDetectionFrame::YDirection() const {
     return cv::Point2f(-xDirection.y, xDirection.x);
 }
 
+/// <summary>
+/// 根据扫描方向枚举值，获取旋转ROI坐标系中的单位扫描向量。
+/// </summary>
+/// <param name="direction">扫描方向。</param>
+/// <returns>图像坐标系中的单位扫描方向向量。</returns>
 cv::Point2f LineDetectionFrame::GetScanDirection(LineScanDirection direction) const {
     const cv::Point2f xDirection = XDirection();
     const cv::Point2f yDirection = YDirection();
@@ -919,28 +997,28 @@ cv::Point2f LineDetectionFrame::GetScanDirection(LineScanDirection direction) co
 }
 
 /// <summary>
-/// 根据扫描方向获取卡尺排列方向。
+/// 获取垂直于扫描方向的卡尺排列方向。
 /// </summary>
 /// <param name="direction">扫描方向。</param>
-/// <returns>垂直于扫描方向的单位向量。</returns>
+/// <returns>图像坐标系中的单位卡尺排列方向向量。</returns>
 cv::Point2f LineDetectionFrame::GetArrangeDirection(LineScanDirection direction) const {
     return Rotate90(GetScanDirection(direction));
 }
 
 /// <summary>
-/// 根据扫描方向获取扫描长度。
+/// 获取ROI在指定扫描方向上的长度。
 /// </summary>
 /// <param name="direction">扫描方向。</param>
-/// <returns>扫描方向上的ROI长度。</returns>
+/// <returns>卡尺扫描长度。</returns>
 float LineDetectionFrame::GetScanLength(LineScanDirection direction) const {
     return (direction == LineScanDirection::LeftToRight || direction == LineScanDirection::RightToLeft) ? width : height;
 }
 
 /// <summary>
-/// 根据扫描方向获取卡尺排列长度。
+/// 获取ROI在垂直于指定扫描方向上的排列长度。
 /// </summary>
 /// <param name="direction">扫描方向。</param>
-/// <returns>卡尺排列方向上的ROI长度。</returns>
+/// <returns>卡尺排列长度。</returns>
 float LineDetectionFrame::GetArrangeLength(LineScanDirection direction) const {
     return (direction == LineScanDirection::LeftToRight || direction == LineScanDirection::RightToLeft) ? height : width;
 }
@@ -1011,7 +1089,13 @@ std::string ToDisplayString(LineFitMode fitMode) {
     }
 }
 
-//旋转矩形ROI的直线检测
+/// <summary>
+/// 在输入图像的旋转ROI内生成卡尺并执行直线检测。
+/// </summary>
+/// <param name="image">输入图像。</param>
+/// <param name="frame">旋转ROI测量框。</param>
+/// <param name="params">直线检测参数。</param>
+/// <returns>直线检测结果。</returns>
 LineDetectionResult LineDetectionOperator::Detect(
     const cv::Mat& image,
     const LineDetectionFrame& frame,
@@ -1040,7 +1124,13 @@ LineDetectionResult LineDetectionOperator::DetectGray(
     return DetectFromCalipers(grayImage, GenerateCalipers(frame, params), frame, params);
 }
 
-//箭头卡尺的直线检测
+/// <summary>
+/// 使用箭头卡尺集合执行直线检测。
+/// </summary>
+/// <param name="image">输入图像。</param>
+/// <param name="calipers">用户创建的箭头卡尺集合。</param>
+/// <param name="params">直线检测参数。</param>
+/// <returns>直线检测结果。</returns>
 LineDetectionResult LineDetectionOperator::Detect(
     const cv::Mat& image,
     const std::vector<LineCaliper>& calipers,

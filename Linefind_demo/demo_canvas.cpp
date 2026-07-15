@@ -270,19 +270,19 @@ void DemoCanvasApp::OnMouse(int event, int x, int y, int flags) {
             if (HitTestArrowEndpoint(imagePoint, isStartHandle)) {
                 dragMode_ = isStartHandle ? DragMode::ResizingArrowStart : DragMode::ResizingArrowEnd;
                 dragStartImagePoint_ = imagePoint;
-                hasResult_ = false;
+                ClearResult();
                 return;
             }
             if (HitTestArrowLengthHandle(imagePoint)) {
                 dragMode_ = DragMode::ResizingArrowLength;
                 dragStartImagePoint_ = imagePoint;
-                hasResult_ = false;
+                ClearResult();
                 return;
             }
             if (HitTestArrowAxis(imagePoint) || HitTestArrowCaliperBody(imagePoint)) {
                 dragMode_ = DragMode::MovingArrowGroup;
                 dragStartImagePoint_ = imagePoint;
-                hasResult_ = false;
+                ClearResult();
                 return;
             }
         }
@@ -298,12 +298,14 @@ void DemoCanvasApp::OnMouse(int event, int x, int y, int flags) {
                 const cv::Point2f localPoint = ToLocal(frameRoi_, imagePoint);
                 resizeState_.startLocalX = localPoint.x;
                 resizeState_.startLocalY = localPoint.y;
+                ClearResult();
                 return;
             }
 
             if (HitTestInsideFrame(imagePoint, frameRoi_)) {
                 dragMode_ = DragMode::MovingFrame;
                 dragOffset_ = imagePoint - frameRoi_.center;
+                ClearResult();
                 return;
             }
         }
@@ -426,7 +428,7 @@ void DemoCanvasApp::OnMouse(int event, int x, int y, int flags) {
         const bool ctrlPressed = (flags & cv::EVENT_FLAG_CTRLKEY) != 0;
         if (ctrlPressed && roiKind_ == RoiKind::RotatedFrame) {
             frameRoi_.angleDegrees += wheel > 0 ? kRotationStep : -kRotationStep;
-            hasResult_ = false;
+            ClearResult();
             return;
         }
 
@@ -470,23 +472,23 @@ void DemoCanvasApp::HandleKey(int key) {
     case 'Q':
         if (roiKind_ == RoiKind::RotatedFrame) {
             frameRoi_.angleDegrees -= kRotationStep;
-            hasResult_ = false;
+            ClearResult();
         }
         return;
     case 'e':
     case 'E':
         if (roiKind_ == RoiKind::RotatedFrame) {
             frameRoi_.angleDegrees += kRotationStep;
-            hasResult_ = false;
+            ClearResult();
         }
         return;
     case 2490368:
         params_.edgeThreshold += 1.0f;
-        hasResult_ = false;
+        ClearResult();
         return;
     case 2621440:
         params_.edgeThreshold = std::max(0.0f, params_.edgeThreshold - 1.0f);
-        hasResult_ = false;
+        ClearResult();
         return;
     default:
         return;
@@ -758,16 +760,17 @@ void DemoCanvasApp::DrawRotatedFrameCalipers(cv::Mat& imageCanvas) const {
     const cv::Point2f arrangeDir = Normalize(frameRoi_.GetArrangeDirection(params_.scanDirection));
     const float arrangeLength = frameRoi_.GetArrangeLength(params_.scanDirection);
     const float scanLength = frameRoi_.GetScanLength(params_.scanDirection);
-    const float cellWidth = arrangeLength / static_cast<float>(caliperCount);
+    const float spacing = arrangeLength / static_cast<float>(caliperCount);
+    const float caliperWidth = std::max(1.0f, arrangeLength / static_cast<float>(caliperCount));
     const float halfScan = scanLength * 0.5f;
+    const float halfWidth = caliperWidth * 0.5f;
 
     for (int index = 0; index < caliperCount; ++index) {
-        const float left = -arrangeLength * 0.5f + cellWidth * static_cast<float>(index);
-        const float right = left + cellWidth;
-        const cv::Point2f topLeft = frameRoi_.center + arrangeDir * left - scanDir * halfScan;
-        const cv::Point2f topRight = frameRoi_.center + arrangeDir * right - scanDir * halfScan;
-        const cv::Point2f bottomRight = frameRoi_.center + arrangeDir * right + scanDir * halfScan;
-        const cv::Point2f bottomLeft = frameRoi_.center + arrangeDir * left + scanDir * halfScan;
+        const cv::Point2f center = frameRoi_.center + arrangeDir * ((static_cast<float>(index) + 0.5f) * spacing - arrangeLength * 0.5f);
+        const cv::Point2f topLeft = center - arrangeDir * halfWidth - scanDir * halfScan;
+        const cv::Point2f topRight = center + arrangeDir * halfWidth - scanDir * halfScan;
+        const cv::Point2f bottomRight = center + arrangeDir * halfWidth + scanDir * halfScan;
+        const cv::Point2f bottomLeft = center - arrangeDir * halfWidth + scanDir * halfScan;
         const std::array<cv::Point, 4> corners = {
             ImageToScreen(topLeft) - viewport_.drawRect.tl(),
             ImageToScreen(topRight) - viewport_.drawRect.tl(),
@@ -873,7 +876,7 @@ bool DemoCanvasApp::LoadImageFromPath(const std::string& path) {
     sourceImage_ = image;
     cv::cvtColor(sourceImage_, grayImage_, cv::COLOR_BGR2GRAY);
     imagePath_ = path;
-    hasResult_ = false;
+    ClearResult();
     ResetImageView();
     return true;
 }
@@ -940,7 +943,7 @@ void DemoCanvasApp::ClearRoi() {
 void DemoCanvasApp::ResetCreateMode(CreateMode mode) {
     createMode_ = mode;
     dragMode_ = DragMode::None;
-    hasResult_ = false;
+    ClearResult();
     if (mode == CreateMode::ArrowCaliper) {
         roiKind_ = RoiKind::ArrowCaliper;
         hasRoi_ = false;
@@ -1016,7 +1019,7 @@ void DemoCanvasApp::StartFrameCreate(const cv::Point2f& imagePoint) {
     frameRoi_ = LineDetectionFrame{imagePoint, kMinFrameSize, kMinFrameSize, 0.0f};
     hasRoi_ = true;
     roiKind_ = RoiKind::RotatedFrame;
-    hasResult_ = false;
+    ClearResult();
 }
 
 void DemoCanvasApp::UpdateFrameCreate(const cv::Point2f& imagePoint) {
@@ -1239,7 +1242,7 @@ void DemoCanvasApp::UpdateParameterFromControl(size_t paramIndex, bool increment
     default:
         break;
     }
-    hasResult_ = false;
+    ClearResult();
 }
 
 void DemoCanvasApp::ResetImageView() {

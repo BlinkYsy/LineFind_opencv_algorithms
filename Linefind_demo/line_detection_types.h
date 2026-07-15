@@ -120,10 +120,17 @@ struct LineCaliper {
 /// <param name="scanDirection">扫描方向。</param>
 /// <param name="lineStart">结果线段起点。</param>
 /// <param name="lineEnd">结果线段终点。</param>
-/// <param name="lineEnd">检测直线角度。</param>
-/// 
-/// <param name="elapsedMilliseconds">检测耗时。</param>
-/// <param name="edgePoints">检测点集合。</param>
+/// <param name="angleDegrees">检测直线角度，单位为度。</param>
+/// <param name="fitError">参与拟合点到结果直线的平均绝对距离误差。</param>
+/// <param name="fitErrorRmse">参与拟合点到结果直线的均方根距离误差。</param>
+/// <param name="averageStrength">参与拟合点的平均边缘强度。</param>
+/// <param name="maxStrength">参与拟合点中的最大边缘强度。</param>
+/// <param name="elapsedMilliseconds">检测耗时，单位为毫秒。</param>
+/// <param name="rawPointCount">离群点剔除前的原始检测点数量。</param>
+/// <param name="fitPointCount">实际参与最终直线拟合的点数量。</param>
+/// <param name="excludedPointCount">被判定为离群点并剔除的点数量。</param>
+/// <param name="edgePoints">参与最终拟合的检测点集合。</param>
+/// <param name="excludedEdgePoints">被剔除的离群检测点集合。</param>
 struct LineDetectionResult {
     bool success = false;
     std::string message;
