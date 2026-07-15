@@ -206,6 +206,9 @@ int DemoCanvasApp::Run() {
     }
 
     for (;;) {
+        if (cv::getWindowProperty(windowName_, cv::WND_PROP_VISIBLE) < 1.0) {
+            break;
+        }
         Render();
         const int key = cv::waitKeyEx(16);
         if (key < 0) {
